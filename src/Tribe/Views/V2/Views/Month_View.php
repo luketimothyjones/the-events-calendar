@@ -272,6 +272,8 @@ class Month_View extends By_Day_View {
 		// The multi-day stack will contain spacers and post IDs.
 		$day_stacks = $this->build_day_stacks( $grid_days );
 
+		$grid_events = $this->grid_events;
+
 		// Let's prepare an array of days more digestible by the templates.
 		$days = [];
 		foreach ( $grid_days as $day_date => $day_events ) {
@@ -281,23 +283,39 @@ class Month_View extends By_Day_View {
 			 *
 			 * @see tribe_get_event()
 			 */
-			$date_object = Dates::build_date_object( $day_date );
+			$date_object           = Dates::build_date_object( $day_date );
+			$date_object_formatted = $date_object->format( 'Y-m-d' );
 
 			// The multi-day stack includes spacers; that's why we use `element`.
-			$day_stack = array_map( static function ( $element ) use ( $date_object ) {
+			$day_stack = array_map( static function ( $element ) use ( $date_object_formatted, $grid_events ) {
+				if ( ! is_numeric( $element ) ) {
+					return $element;
+				}
+
 				// If it's numeric make an event object of it.
-				return is_numeric( $element ) ?
-					tribe_get_event( $element, OBJECT, $date_object->format( 'Y-m-d' ) )
-					: $element;
+				if ( isset( $grid_events[ (int) $element ] ) ) {
+					$event = $grid_events[ $element ]->model->set_date_references( $grid_events[ $element ], $date_object_formatted );
+				} else {
+					$event = tribe_get_event( $element, OBJECT, $date_object_formatted );
+				}
+
+				return $event;
 			}, Arr::get( $day_stacks, $day_date, [] ) );
 
-			$the_day_events = array_map( 'tribe_get_event',
-				array_filter( $day_events, static function ( $event ) use ( $date_object ) {
-					$event = tribe_get_event( $event, OBJECT, $date_object->format( 'Y-m-d' ) );
+			$the_day_events_objects = array_map(  static function ( $event ) use ( $date_object_formatted, $grid_events ) {
+				if ( $event instanceof \WP_Post ) {
+					$event = $event->model->set_date_references( $event, $date_object_formatted );
+				} else {
+					$event = $grid_events[ $event ];
+					$event->model->set_date_references( $event, $date_object_formatted );
+				}
 
-					return $event instanceof \WP_Post && ! ( $event->multiday || $event->all_day );
-				} )
-			);
+				return $event;
+			}, $day_events );
+
+			$the_day_events = array_filter( $the_day_events_objects, static function ( $event ) {
+				return $event instanceof \WP_Post && ! ( $event->multiday || $event->all_day );
+			} );
 
 			$more_events  = 0;
 			$day_found_events = Arr::get( $found_events, $day_date, 0 );
@@ -322,14 +340,9 @@ class Month_View extends By_Day_View {
 				$more_events = $day_found_events - $stack_events_count - count( $the_day_events );
 			}
 
-			$featured_events = array_map( 'tribe_get_event',
-				array_filter( $day_events,
-					static function ( $event ) use ( $date_object ) {
-						$event = tribe_get_event( $event, OBJECT, $date_object->format( 'Y-m-d' ) );
-
-						return $event instanceof \WP_Post && $event->featured;
-					} )
-			);
+			$featured_events = array_filter( $the_day_events_objects, static function ( $event ) {
+				return $event instanceof \WP_Post && $event->featured;
+			} );
 
 			$start_of_week = get_option( 'start_of_week', 0 );
 
